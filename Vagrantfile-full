@@ -1,0 +1,77 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+VAGRANTFILE_API_VERSION = "2"
+
+Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
+
+  config.vm.box = "precise64"
+  config.vm.box_url = "http://files.vagrantup.com/precise64.box"
+  config.vm.network :forwarded_port, guest: 80, host: 8080
+  config.vm.network :forwarded_port, guest: 8000, host: 8100
+  config.vm.network :private_network, ip: "192.168.89.89"
+
+  config.vm.provider :virtualbox do |vb|
+    vb.name = "HHVM"
+    vb.customize ["modifyvm", :id, "--memory", "1024"]
+    vb.customize ["modifyvm", :id, "--ostype", "Ubuntu_64"]
+  end
+
+  config.vm.provision "shell", inline: <<-shell
+
+    # localize
+    sudo locale-gen ja_JP.UTF-8
+    sudo cp /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+
+    # repository setting
+    apt-get update
+    apt-get install python-software-properties  -y --force-yes
+    add-apt-repository ppa:mapnik/boost
+    add-apt-repository ppa:nginx/stable
+    wget -O - http://dl.hhvm.com/conf/hhvm.gpg.key | sudo apt-key add -
+    echo deb http://dl.hhvm.com/ubuntu precise main | sudo tee /etc/apt/sources.list.d/hhvm.list
+
+    # package insall
+    apt-get update
+    apt-get install nginx -y --force-yes
+    apt-get install php5 php5-cli php5-fpm php5-mysql -y --force-yes
+    apt-get install hhvm-nightly -y --force-yes
+    apt-get install curl screen vim git -y --force-yes
+
+    # mysql install & config
+    debconf-set-selections <<< 'mysql-server-5.5 mysql-server/root_password password pa$$'
+    debconf-set-selections <<< 'mysql-server-5.5 mysql-server/root_password_again password pa$$'
+    apt-get install mysql-server -y --force-yes
+
+    # hhvm-fastcgi config
+    sudo chown vagrant /etc/hhvm
+    sudo cp /vagrant/conf/server.ini /etc/hhvm/server.ini
+    sudo rm /etc/nginx/sites-enabled/default
+    sudo cp /vagrant/conf/nginx-fastcgi /etc/nginx/sites-available/nginx-fastcgi
+    sudo ln -s /etc/nginx/sites-available/nginx-fastcgi /etc/nginx/sites-enabled/nginx-fastcgi
+    sudo /usr/bin/update-alternatives --set php /usr/bin/php5
+
+    # Service start
+    sudo service php5-fpm restart
+    sudo service nginx restart
+
+    # wp-cli install
+    curl -L http://wp-cli.org/installer.sh > installer.sh
+    chmod +x installer.sh
+    sudo INSTALL_DIR='/usr/share/wp-cli' bash installer.sh
+    sudo ln -s /usr/share/wp-cli/bin/wp /usr/bin/wp
+
+    # wordpress install & config
+    sudo mkdir -p /var/www/
+    sudo chown -R vagrant /var/www/
+    wp core download --locale=ja --path=/var/www/wp/ --allow-root
+    wp core config --dbname=wordpress --dbuser=root --dbpass='pa$$' --dbhost=127.0.0.1 --locale=jp --path=/var/www/wp/ --allow-root
+    wp db create --path=/var/www/wp/ --allow-root
+    wp core install --url='192.168.89.89/wp' --title='PHPer-na' --admin_name='wordpress' --admin_password='wordpress' --admin_email='wordpress@phper-na.info' --path=/var/www/wp/ --allow-root
+    wp theme activate twentythirteen --path=/var/www/wp/ --allow-root
+
+    ln -s /vagrant/Source/ /var/www/host
+
+  shell
+
+end
